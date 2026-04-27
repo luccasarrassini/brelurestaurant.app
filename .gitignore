@@ -3,3 +3,5 @@ node_modules
 dist
 build
 .DS_Store
+.tmp_video_frames*
+tmp-schema-check.js
