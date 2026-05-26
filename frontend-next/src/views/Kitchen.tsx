@@ -21,6 +21,7 @@ import AdminLayout from '../components/AdminLayout'
 import { useAdmin } from '../components/AdminContext'
 import { fetchOrdersForRestaurant, updateOrderStatus, type OrderSummary } from '../api/admin'
 import { fetchProfilesByIds, type Profile } from '../api/profiles'
+import { fetchDrivers, type Driver } from '../api/drivers'
 import { formatCents, toCents } from '../lib/money'
 import { useToast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
@@ -35,7 +36,13 @@ import {
   History,
   Plus,
   Truck,
-  PackageOpen
+  PackageOpen,
+  Phone,
+  ShoppingBag,
+  Printer,
+  Trash2,
+  X,
+  Bike
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -182,6 +189,7 @@ export default function Kitchen() {
 
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null)
   const [selectedOrderPayments, setSelectedOrderPayments] = useState<Array<{id: string; method: string; amount_cents: number; change_cents: number}>>([])
+  const [drivers, setDrivers] = useState<Driver[]>([])
   const [showCancelDrawer, setShowCancelDrawer] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [showDrafts, setShowDrafts] = useState(false)
@@ -225,12 +233,14 @@ export default function Kitchen() {
 
       const loadCatalog = async () => {
         setCatalogLoading(true)
-        const [cats, prods] = await Promise.all([
+        const [cats, prods, drvs] = await Promise.all([
           fetchCategories(selectedRestaurantId),
-          fetchProducts(selectedRestaurantId)
+          fetchProducts(selectedRestaurantId),
+          fetchDrivers(selectedRestaurantId)
         ])
         if (!cats.error) setCategories(cats.data ?? [])
         if (!prods.error) setProducts(prods.data ?? [])
+        if (!drvs.error) setDrivers(drvs.data as Driver[] ?? [])
         setCatalogLoading(false)
       }
       loadCatalog()
@@ -708,7 +718,25 @@ export default function Kitchen() {
                     (order.customer_id ? profiles[order.customer_id]?.name : null) ?? 'Cliente'
 
                   return (
-                    <div key={order.id} className={clsx('kds-card', isStuck && 'stuck')}>
+                    <div 
+                      key={order.id} 
+                      className={clsx('kds-card', isStuck && 'stuck')}
+                      style={{ cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}
+                      onClick={() => {
+                        setSelectedOrder(order)
+                        if (order.payments) {
+                          setSelectedOrderPayments(order.payments)
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)'
+                        e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = 'none'
+                      }}
+                    >
                       <div className="kds-card-header">
                         <span className="kds-card-title">#{String(getOrderNumber(order)).padStart(3, '0')}</span>
                         <div className="kds-card-time">
@@ -748,7 +776,10 @@ export default function Kitchen() {
                           'button-primary flex-center gap-2',
                           col.key === 'ready' ? 'button-green' : col.key === 'preparing' ? 'button-blue' : 'button-orange'
                         )}
-                        onClick={() => handleAdvance(order.id, order.status)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAdvance(order.id, order.status)
+                        }}
                         style={{ marginTop: '8px' }}
                       >
                         {nextStatusLabel(order.status)}
@@ -981,8 +1012,320 @@ export default function Kitchen() {
               </div>
             </div>
           )}
+
         </div>
       )}
-    </AdminLayout>
-  )
-}
+
+      {selectedOrder && (
+        <div 
+          className="modal-backdrop" 
+          onClick={() => setSelectedOrder(null)} 
+          style={{ zIndex: 2150 }}
+        >
+          {/* Central Modal Card Panel */}
+          <div 
+            className="modal animate-in" 
+            style={{ 
+              width: 'min(540px, 95vw)', 
+              maxWidth: '540px', 
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+              padding: '28px',
+              background: '#FFFDF9'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="modal-header" style={{ paddingBottom: '16px', borderBottom: '1px solid var(--gray-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Visualização do Pedido
+                </span>
+                <h3 className="text-2xl font-bold flex-center gap-2" style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
+                  #{String(getOrderNumber(selectedOrder)).padStart(3, '0')}
+                </h3>
+                <span className="text-sm font-semibold text-gray-700">
+                  {selectedOrder.customer_name || (selectedOrder.customer_id ? profiles[selectedOrder.customer_id]?.name : null) || 'Cliente'}
+                </span>
+              </div>
+              <button 
+                type="button" 
+                className="button-ghost p-1 flex-center"
+                style={{ borderRadius: '50%', width: '36px', height: '36px', minWidth: 'unset', border: 'none', background: 'var(--gray-100)' }}
+                onClick={() => setSelectedOrder(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+              {/* 1. Canal e Tempo */}
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {/* Canal de Entrega Tag */}
+                {(() => {
+                  const dtype = selectedOrder.deliveries?.[0]?.delivery_type || selectedOrder.delivery_type || 'dine_in'
+                  if (dtype === 'delivery') {
+                    return (
+                      <span className="badge badge-preparing" style={{ padding: '6px 12px', fontSize: '13px', background: '#F0F9FF', color: '#0EA5E9' }}>
+                        <Truck size={14} style={{ marginRight: '4px' }} /> Delivery
+                      </span>
+                    )
+                  }
+                  if (dtype === 'pickup') {
+                    return (
+                      <span className="badge badge-pending" style={{ padding: '6px 12px', fontSize: '13px', background: '#FEF3C7', color: '#D97706' }}>
+                        <PackageOpen size={14} style={{ marginRight: '4px' }} /> Retirada
+                      </span>
+                    )
+                  }
+                  return (
+                    <span className="badge badge-ready" style={{ padding: '6px 12px', fontSize: '13px', background: '#ECFDF5', color: '#10B981' }}>
+                      <ShoppingBag size={14} style={{ marginRight: '4px' }} /> Consumo Local
+                    </span>
+                  )
+                })()}
+
+                {/* Cronometro decorrido */}
+                <span className="badge" style={{ padding: '6px 12px', fontSize: '13px', background: 'var(--gray-100)', color: 'var(--gray-600)' }}>
+                  <Clock size={14} style={{ marginRight: '4px' }} />
+                  Entrou há {getMinutesSince(selectedOrder.created_at, now)} min
+                </span>
+                
+                {/* Status atual */}
+                <span className={`badge badge-${selectedOrder.status}`} style={{ padding: '6px 12px', fontSize: '13px' }}>
+                  Status: {selectedOrder.status === 'preparing' ? 'Em Preparo' : selectedOrder.status === 'ready' ? 'Pronto' : 'Pendente'}
+                </span>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+              {/* 2. Observações Gerais do Pedido (Crítico) */}
+              {selectedOrder.order_notes && (
+                <div style={{
+                  padding: '16px',
+                  background: '#FEF2F2',
+                  border: '1.5px solid #EF4444',
+                  borderRadius: '12px',
+                  color: '#B91C1C',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  boxShadow: 'var(--shadow-xs)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <AlertCircle size={18} />
+                    <span>OBSERVAÇÃO DO CLIENTE:</span>
+                  </div>
+                  <p style={{ margin: 0, textTransform: 'uppercase' }}>"{selectedOrder.order_notes}"</p>
+                </div>
+              )}
+
+              {/* 3. Lista de Itens */}
+              <div>
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                  Itens do Pedido ({selectedOrder.order_items?.length || 0})
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {selectedOrder.order_items?.map((item) => (
+                    <div 
+                      key={item.id} 
+                      style={{ 
+                        padding: '14px 16px', 
+                        background: '#FFFFFF', 
+                        borderRadius: '12px', 
+                        border: '1px solid var(--gray-200)',
+                        boxShadow: 'var(--shadow-xs)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <span style={{ fontWeight: 800, color: 'var(--amber-600)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
+                            {item.quantity}x
+                          </span>
+                          <span style={{ fontWeight: 600, color: 'var(--gray-900)', fontSize: '15px' }}>
+                            {item.name_snapshot}
+                          </span>
+                        </div>
+                        <span style={{ fontWeight: 700, color: 'var(--gray-900)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
+                          {formatCents((item.price_cents_snapshot || 0) * item.quantity)}
+                        </span>
+                      </div>
+
+                      {/* Observações / Adicionais do Item com Destaque Crítico */}
+                      {item.notes && (
+                        <div style={{
+                          marginTop: '10px',
+                          padding: '8px 12px',
+                          background: '#FFFBEB',
+                          borderLeft: '4px solid #F59E0B',
+                          borderRadius: '4px',
+                          color: '#B45309',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          lineHeight: '1.4'
+                            }}>
+                          💡 Opcionais: <span style={{ textTransform: 'uppercase' }}>{item.notes}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+              {/* 4. Logística de Entrega (se Delivery) */}
+              {(() => {
+                const delivery = selectedOrder.deliveries?.[0]
+                const dtype = delivery?.delivery_type || selectedOrder.delivery_type || 'dine_in'
+                const isDelivery = dtype === 'delivery'
+                const phone = selectedOrder.customer_phone || (selectedOrder.customer_id ? profiles[selectedOrder.customer_id]?.phone : null)
+                const assignedDriver = delivery?.driver_id ? drivers.find(d => d.id === delivery.driver_id) : null
+
+                return (
+                  <div>
+                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                      Logística & Entrega
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {/* Telefone */}
+                      {phone && (
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-700)' }}>
+                          <Phone size={16} style={{ color: 'var(--amber-600)' }} />
+                          <strong>Telefone:</strong>
+                          <span>{formatPhone(phone)}</span>
+                        </div>
+                      )}
+
+                      {/* Endereço */}
+                      {isDelivery && delivery ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '14px', color: 'var(--gray-700)' }}>
+                            <Truck size={16} style={{ color: 'var(--amber-600)', flexShrink: 0, marginTop: '2px' }} />
+                            <div>
+                              <strong>Endereço de Entrega:</strong>
+                              <p style={{ margin: '2px 0 0 0', lineHeight: '1.4' }}>
+                                {delivery.street}, {delivery.number}
+                                {delivery.complement && ` (${delivery.complement})`}
+                                <br />
+                                {delivery.neighborhood} — {delivery.city}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-500)', fontStyle: 'italic' }}>
+                          <PackageOpen size={16} />
+                          <span>Pedido para {dtype === 'pickup' ? 'Retirada no Balcão' : 'Consumo Local'}</span>
+                        </div>
+                      )}
+
+                      {/* Entregador */}
+                      {isDelivery && (
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '10px', 
+                          fontSize: '14px', 
+                          padding: '10px 14px', 
+                          background: assignedDriver ? 'var(--emerald-50)' : 'var(--amber-50)', 
+                          border: assignedDriver ? '1px solid rgba(16,185,129,0.2)' : '1px solid rgba(245,158,11,0.2)', 
+                          borderRadius: '8px',
+                          color: assignedDriver ? 'var(--emerald-700)' : 'var(--amber-700)'
+                        }}>
+                          <Bike size={16} />
+                          <strong>Entregador:</strong>
+                          {assignedDriver ? (
+                            <span style={{ fontWeight: 600 }}>{assignedDriver.name} ({assignedDriver.vehicle_type || 'Moto'})</span>
+                          ) : (
+                            <span style={{ fontWeight: 600 }}>⚠️ Aguardando vínculo na frota</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+              {/* 5. Resumo Financeiro */}
+              <div>
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                  Resumo Financeiro
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px', background: 'var(--surface-100)', borderRadius: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
+                    <span>Subtotal dos itens</span>
+                    <span>{formatCents(selectedOrder.subtotal)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
+                    <span>Taxa de entrega</span>
+                    <span>{formatCents(selectedOrder.delivery_fee)}</span>
+                  </div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 900, color: 'var(--gray-900)', fontFamily: 'var(--font-display)', paddingTop: '10px', borderTop: '2px dashed var(--gray-200)', marginTop: '4px' }}>
+                    <span>Total</span>
+                    <span>{formatCents(selectedOrder.total)}</span>
+                  </div>
+
+                  {/* Forma de Pagamento */}
+                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--gray-200)' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--gray-500)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                      Pagamento:
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {selectedOrderPayments.length > 0 ? (
+                        selectedOrderPayments.map((p, idx) => (
+                          <span key={idx} className="payment-tag">
+                            {paymentMethodLabel(p.method)}: {formatCents(p.amount_cents)}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="payment-tag" style={{ background: 'var(--rose-50)', color: 'var(--rose-600)', borderColor: 'rgba(244,63,94,0.2)' }}>
+                          {paymentMethodLabel(selectedOrder.payment_method || 'Outro')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Ações */}
+              <div 
+                style={{ 
+                  paddingTop: '20px', 
+                  borderTop: '1px solid var(--gray-200)', 
+                  background: '#FFFFFF',
+                  display: 'flex',
+                  gap: '12px',
+                  alignItems: 'center',
+                  marginTop: '8px'
+                }}
+              >
+                {/* Imprimir Cupom */}
+                <button 
+                  type="button" 
+                  className="button-primary flex-center gap-2" 
+                  onClick={() => handlePrint(selectedOrder)}
+                  style={{ flex: 1, padding: '12px 16px', justifyContent: 'center' }}
+                >
+                  <Printer size={16} /> Imprimir (80mm)
+                </button>
+
+                {/* Cancelar Pedido */}
+                <button 
+                  type="button" 
+                  className="button-danger flex-center gap-2"
+                  onClick={() => setShowCancelDrawer(true)}
+                  style={{ padding: '12px 16px', justifyContent: 'center' }}
+                >
+                  <Trash2 size={16} /> Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </AdminLayout>
+    )
+  }

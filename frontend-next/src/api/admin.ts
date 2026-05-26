@@ -120,7 +120,7 @@ export async function fetchOrdersForRestaurant(restaurantId: string, limit?: num
       delivery_type,
       order_number,
       order_items(id,product_id,quantity,price,price_cents_snapshot,name_snapshot,notes),
-      deliveries(id,delivery_type,fee_cents,street,number,neighborhood,city,complement),
+      deliveries(id,delivery_type,fee_cents,street,number,neighborhood,city,complement,driver_id),
       payments:order_payments(id,method,amount_cents,change_cents)
     `)
     .eq('restaurant_id', restaurantId)
