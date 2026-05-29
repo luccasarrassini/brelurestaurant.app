@@ -25,12 +25,12 @@ import { fetchDrivers, type Driver } from '../api/drivers'
 import { formatCents, toCents } from '../lib/money'
 import { useToast } from '../components/Toast'
 import { supabase } from '../lib/supabase'
-import { 
-  Clock, 
-  ChevronRight, 
-  Check, 
-  ChefHat, 
-  Bell, 
+import {
+  Clock,
+  ChevronRight,
+  Check,
+  ChefHat,
+  Bell,
   AlertCircle,
   Search,
   History,
@@ -145,6 +145,24 @@ function nextStatusLabel(current: string | null): string {
   return 'Avançar'
 }
 
+function formatCPF(val: string): string {
+  const digits = val.replace(/\D/g, '').slice(0, 11)
+  let formatted = ''
+  if (digits.length > 0) {
+    formatted += digits.slice(0, 3)
+  }
+  if (digits.length > 3) {
+    formatted += '.' + digits.slice(3, 6)
+  }
+  if (digits.length > 6) {
+    formatted += '.' + digits.slice(6, 9)
+  }
+  if (digits.length > 9) {
+    formatted += '-' + digits.slice(9, 11)
+  }
+  return formatted
+}
+
 export default function Kitchen() {
   const { selectedRestaurantId } = useAdmin()
   const { pushToast } = useToast()
@@ -154,11 +172,13 @@ export default function Kitchen() {
   const [pdvOpen, setPdvOpen] = useState(false)
   const [pdvStep, setPdvStep] = useState<'categories' | 'items'>('categories')
   const [pdvTab, setPdvTab] = useState<'counter' | 'tables'>('counter')
-  
+
   const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
-  
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
+
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [categorySearch, setCategorySearch] = useState('')
   const [cartItems, setCartItems] = useState<CartItemInput[]>([])
@@ -171,6 +191,7 @@ export default function Kitchen() {
   const [customerAddresses, setCustomerAddresses] = useState<CustomerAddress[]>([])
 
   const [deliveryType, setDeliveryType] = useState<'delivery' | 'pickup' | 'dine_in'>('delivery')
+  const [cpf, setCpf] = useState('')
   const [deliveryFee, setDeliveryFee] = useState(0)
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null)
   const [showDeliveryModal, setShowDeliveryModal] = useState(false)
@@ -187,8 +208,13 @@ export default function Kitchen() {
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false)
   const [nfRequested, setNfRequested] = useState(false)
 
+  const [showSplitPaymentModal, setShowSplitPaymentModal] = useState(false)
+  const [splitPixStr, setSplitPixStr] = useState('')
+  const [splitCashStr, setSplitCashStr] = useState('')
+  const [splitCardStr, setSplitCardStr] = useState('')
+
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null)
-  const [selectedOrderPayments, setSelectedOrderPayments] = useState<Array<{id: string; method: string; amount_cents: number; change_cents: number}>>([])
+  const [selectedOrderPayments, setSelectedOrderPayments] = useState<Array<{ id: string; method: string; amount_cents: number; change_cents: number }>>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [showCancelDrawer, setShowCancelDrawer] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
@@ -231,19 +257,19 @@ export default function Kitchen() {
     loadOrders()
     if (!selectedRestaurantId) return
 
-      const loadCatalog = async () => {
-        setCatalogLoading(true)
-        const [cats, prods, drvs] = await Promise.all([
-          fetchCategories(selectedRestaurantId),
-          fetchProducts(selectedRestaurantId),
-          fetchDrivers(selectedRestaurantId)
-        ])
-        if (!cats.error) setCategories(cats.data ?? [])
-        if (!prods.error) setProducts(prods.data ?? [])
-        if (!drvs.error) setDrivers(drvs.data as Driver[] ?? [])
-        setCatalogLoading(false)
-      }
-      loadCatalog()
+    const loadCatalog = async () => {
+      setCatalogLoading(true)
+      const [cats, prods, drvs] = await Promise.all([
+        fetchCategories(selectedRestaurantId),
+        fetchProducts(selectedRestaurantId),
+        fetchDrivers(selectedRestaurantId)
+      ])
+      if (!cats.error) setCategories(cats.data ?? [])
+      if (!prods.error) setProducts(prods.data ?? [])
+      if (!drvs.error) setDrivers(drvs.data as Driver[] ?? [])
+      setCatalogLoading(false)
+    }
+    loadCatalog()
 
 
     const channel = supabase
@@ -289,6 +315,17 @@ export default function Kitchen() {
     const interval = setInterval(() => setNow(Date.now()), TIMER_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    if (showSplitPaymentModal) {
+      const pixVal = payments.find(p => p.method === 'pix')?.amount_cents ?? 0
+      const cashVal = payments.find(p => p.method === 'cash')?.amount_cents ?? 0
+      const cardVal = payments.find(p => p.method === 'card')?.amount_cents ?? 0
+      setSplitPixStr(pixVal > 0 ? String(pixVal / 100) : '')
+      setSplitCashStr(cashVal > 0 ? String(cashVal / 100) : '')
+      setSplitCardStr(cardVal > 0 ? String(cardVal / 100) : '')
+    }
+  }, [showSplitPaymentModal, payments])
 
   const grouped = useMemo(() => {
     const map = new Map<string, OrderSummary[]>()
@@ -350,6 +387,13 @@ export default function Kitchen() {
     setSelectedAddressId(null)
     setPayments([])
     setNfRequested(false)
+    setCpf('')
+    setIsSubmitting(false)
+    setSelectedProductId(null)
+    setShowSplitPaymentModal(false)
+    setSplitPixStr('')
+    setSplitCashStr('')
+    setSplitCardStr('')
   }
 
   function clearPdvOrder() {
@@ -358,28 +402,41 @@ export default function Kitchen() {
   }
 
   const addPayment = useCallback((method: OrderPaymentInput['method']) => {
-    setCartItems(prevItems => {
-      let sub = 0
-      prevItems.forEach(item => {
-        const product = products.find(p => p.id === item.product_id)
-        if (product) sub += product.price_cents * item.quantity
-      })
-      const currentTotal = sub + deliveryFee
-      
-      setPayments(prev => {
+    let sub = 0
+    cartItems.forEach(item => {
+      const product = products.find(p => p.id === item.product_id)
+      if (product) sub += product.price_cents * item.quantity
+    })
+    const currentTotal = sub + deliveryFee
+
+    setPayments(prev => {
+      const existingIdx = prev.findIndex(p => p.method === method)
+      if (existingIdx !== -1) {
+        const otherPaymentsSum = prev.reduce((acc, p, idx) => {
+          if (idx === existingIdx) return acc
+          return acc + (p.amount_cents || 0)
+        }, 0)
+        const remaining = Math.max(0, currentTotal - otherPaymentsSum)
+        const amount = remaining || currentTotal
+        return prev.map((p, idx) => idx === existingIdx ? { ...p, amount_cents: amount } : p)
+      } else {
         const sum = prev.reduce((acc, p) => acc + (p.amount_cents || 0), 0)
         const remaining = Math.max(0, currentTotal - sum)
         const amount = remaining || currentTotal
         return [...prev, { method, amount_cents: amount, change_cents: 0 }]
-      })
-      return prevItems
+      }
     })
     pushToast('Pagamento adicionado!')
-  }, [deliveryFee, products, pushToast])
+  }, [cartItems, deliveryFee, products, pushToast])
+
+  const removePayment = useCallback((idxToRemove: number) => {
+    setPayments(prev => prev.filter((_, idx) => idx !== idxToRemove))
+    pushToast('Pagamento removido!')
+  }, [pushToast])
 
   const handleCreateOrder = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!selectedRestaurantId) return
+    if (!selectedRestaurantId || isSubmitting) return
 
     const errors: string[] = []
     if (cartItems.length === 0) errors.push('Adicione itens ao carrinho')
@@ -392,6 +449,14 @@ export default function Kitchen() {
       return
     }
     setValidationErrors([])
+    setIsSubmitting(true)
+
+    const finalNotes = [
+      orderNotes?.trim(),
+      nfRequested && cpf?.trim() ? `CPF NA NOTA: ${cpf.trim()}` : null
+    ].filter(Boolean).join(' | ')
+
+    const selectedAddressObj = customerAddresses.find(a => a.id === selectedAddressId)
 
     const pdvInput: PdvOrderInput = {
       source: 'pdv',
@@ -401,18 +466,27 @@ export default function Kitchen() {
         phone: customerPhone || undefined,
         phone_digits: normalizePhone(customerPhone) || undefined,
       },
-      delivery: { 
-        type: deliveryType, 
-        fee_cents: deliveryFee, 
-        address_id: selectedAddressId ?? undefined 
+      delivery: {
+        type: deliveryType,
+        fee_cents: deliveryFee,
+        address_id: selectedAddressId ?? undefined,
+        address: deliveryType === 'delivery' && selectedAddressObj ? {
+          postal_code: selectedAddressObj.postal_code,
+          street: selectedAddressObj.street,
+          number: selectedAddressObj.number,
+          neighborhood: selectedAddressObj.neighborhood,
+          city: selectedAddressObj.city,
+          complement: selectedAddressObj.complement || undefined
+        } : undefined
       },
       payments,
       nf_requested: nfRequested,
-      order_notes: orderNotes || undefined,
+      order_notes: finalNotes || undefined,
     }
 
     const { data, error } = await createOrder(selectedRestaurantId, cartItems, pdvInput)
     if (error) {
+      setIsSubmitting(false)
       // Try raw fetch to get actual error body
       try {
         const session = (await supabase.auth.getSession()).data.session
@@ -438,7 +512,7 @@ export default function Kitchen() {
       resetPdv()
       loadOrders()
     }
-  }, [selectedRestaurantId, cartItems, customerId, customerName, customerPhone, deliveryType, deliveryFee, selectedAddressId, payments, nfRequested, orderNotes, pushToast, loadOrders, setValidationErrors])
+  }, [selectedRestaurantId, cartItems, customerId, customerName, customerPhone, deliveryType, deliveryFee, selectedAddressId, payments, nfRequested, orderNotes, cpf, isSubmitting, pushToast, loadOrders, setValidationErrors, customerAddresses])
 
   async function handleStatusChange(orderId: string, status: string) {
     const result = await updateOrderStatus(orderId, status)
@@ -523,7 +597,7 @@ export default function Kitchen() {
         case 'enter':
           if (isInput && target?.tagName === 'TEXTAREA') return
           event.preventDefault()
-          handleCreateOrder()
+          if (!isSubmitting) handleCreateOrder()
           break
         default: break
       }
@@ -531,7 +605,7 @@ export default function Kitchen() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [pdvOpen, showDeliveryModal, showPaymentDrawer, selectedOrder, addPayment, handleCreateOrder])
+  }, [pdvOpen, showDeliveryModal, showPaymentDrawer, selectedOrder, addPayment, handleCreateOrder, isSubmitting])
 
   useEffect(() => {
     if (!pdvOpen) return
@@ -549,7 +623,7 @@ export default function Kitchen() {
   }, [customerPhone, pdvOpen, selectedRestaurantId])
 
   const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products])
-  
+
   const subtotal = useMemo(() => cartItems.reduce((sum, item) => {
     const product = productMap.get(item.product_id)
     return sum + (product?.price_cents ?? 0) * item.quantity
@@ -614,7 +688,10 @@ export default function Kitchen() {
   async function handleSaveAddress() {
     if (!selectedRestaurantId) return
     const id = customerId ?? (await handleEnsureCustomer())
-    if (!id) return
+    if (!id) {
+      pushToast('Erro: Nome e telefone do cliente são necessários para salvar o endereço.')
+      return
+    }
     const res = await createCustomerAddress({
       restaurant_id: selectedRestaurantId,
       customer_id: id,
@@ -627,6 +704,32 @@ export default function Kitchen() {
       setSelectedAddressId(res.data.id)
       pushToast('Endereço salvo')
       setAddressForm({ postal_code: '', street: '', number: '', neighborhood: '', city: '', complement: '' })
+      setShowDeliveryModal(false)
+    } else {
+      pushToast('Erro ao salvar endereço: ' + res.error.message)
+    }
+  }
+
+  async function handleConcluirDelivery() {
+    if (deliveryType === 'delivery') {
+      const selectedAddress = customerAddresses.find(a => a.id === selectedAddressId)
+      const isExistingUnchanged = selectedAddress &&
+        selectedAddress.postal_code === addressForm.postal_code &&
+        selectedAddress.street === addressForm.street &&
+        selectedAddress.number === addressForm.number &&
+        selectedAddress.neighborhood === addressForm.neighborhood &&
+        selectedAddress.city === addressForm.city &&
+        (selectedAddress.complement ?? '') === (addressForm.complement ?? '')
+
+      if (isExistingUnchanged) {
+        setShowDeliveryModal(false)
+      } else if (addressForm.street.trim() || addressForm.postal_code.trim()) {
+        await handleSaveAddress()
+      } else {
+        setShowDeliveryModal(false)
+      }
+    } else {
+      setShowDeliveryModal(false)
     }
   }
 
@@ -642,6 +745,34 @@ export default function Kitchen() {
       prev.map((o) => (o.id === orderId ? { ...o, status: next } : o)),
     )
     pushToast('Status atualizado!')
+  }
+
+  const parsedPix = toCents(splitPixStr || '0')
+  const parsedCash = toCents(splitCashStr || '0')
+  const parsedCard = toCents(splitCardStr || '0')
+
+  const totalPaid = parsedPix + parsedCash + parsedCard
+  const remaining = Math.max(0, totalValue - totalPaid)
+
+  const handleFillRemaining = (method: 'pix' | 'cash' | 'card') => {
+    const currentParsed = method === 'pix' ? parsedPix : method === 'cash' ? parsedCash : parsedCard
+    const newVal = (currentParsed + remaining) / 100
+    if (method === 'pix') setSplitPixStr(String(newVal))
+    else if (method === 'cash') setSplitCashStr(String(newVal))
+    else if (method === 'card') setSplitCardStr(String(newVal))
+  }
+
+  const handleConfirmSplit = () => {
+    const newPayments: OrderPaymentInput[] = []
+    if (parsedPix > 0) newPayments.push({ method: 'pix', amount_cents: parsedPix, change_cents: 0 })
+    if (parsedCash > 0) {
+      const cashChange = Math.max(0, totalPaid - totalValue)
+      newPayments.push({ method: 'cash', amount_cents: parsedCash, change_cents: cashChange })
+    }
+    if (parsedCard > 0) newPayments.push({ method: 'card', amount_cents: parsedCard, change_cents: 0 })
+    setPayments(newPayments)
+    setShowSplitPaymentModal(false)
+    pushToast('Divisão de pagamentos confirmada!')
   }
 
   return (
@@ -697,18 +828,18 @@ export default function Kitchen() {
         {kdsColumns.map((col) => {
           const colOrders = grouped.get(col.key) ?? []
           return (
-              <div key={col.key} className={clsx('kds-column', `kds-${col.key}`)}>
-                <div className="kds-column-header" style={{ alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <h3>
-                      {col.key === 'pending' && <Bell size={18} />}
-                      {col.key === 'preparing' && <ChefHat size={18} />}
-                      {col.key === 'ready' && <Check size={18} />}
-                      {col.label}
-                    </h3>
-                    <span className="kds-column-count">{colOrders.length}</span>
-                  </div>
+            <div key={col.key} className={clsx('kds-column', `kds-${col.key}`)}>
+              <div className="kds-column-header" style={{ alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <h3>
+                    {col.key === 'pending' && <Bell size={18} />}
+                    {col.key === 'preparing' && <ChefHat size={18} />}
+                    {col.key === 'ready' && <Check size={18} />}
+                    {col.label}
+                  </h3>
+                  <span className="kds-column-count">{colOrders.length}</span>
                 </div>
+              </div>
 
               <div className="kds-column-list">
                 {colOrders.map((order) => {
@@ -718,8 +849,8 @@ export default function Kitchen() {
                     (order.customer_id ? profiles[order.customer_id]?.name : null) ?? 'Cliente'
 
                   return (
-                    <div 
-                      key={order.id} 
+                    <div
+                      key={order.id}
                       className={clsx('kds-card', isStuck && 'stuck')}
                       style={{ cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}
                       onClick={() => {
@@ -810,7 +941,7 @@ export default function Kitchen() {
               </div>
             </div>
             <div className="pdv-header-actions">
-              <button type="button" className="ghost flex-center gap-1" onClick={() => setShowDrafts(true)}><History size={16}/> CTRL+X Rascunhos</button>
+              <button type="button" className="ghost flex-center gap-1" onClick={() => setShowDrafts(true)}><History size={16} /> CTRL+X Rascunhos</button>
               <button type="button" className="ghost" onClick={clearPdvOrder}>Limpar</button>
               <button type="button" className="pdv-close" onClick={() => setPdvOpen(false)}>✕</button>
             </div>
@@ -839,7 +970,12 @@ export default function Kitchen() {
                   </div>
                   <div className="pdv-grid items">
                     {filteredProducts.map(p => (
-                      <button key={p.id} type="button" className="pdv-item-card" onClick={() => addToCart(p.id)}>
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={clsx('pdv-item-card', selectedProductId === p.id && 'active')}
+                        onClick={() => setSelectedProductId(p.id)}
+                      >
                         <strong>{p.name}</strong>
                         <span>{formatCents(p.price_cents)}</span>
                       </button>
@@ -848,8 +984,21 @@ export default function Kitchen() {
                 </div>
               )}
 
-              <div className="pdv-footer">
-                <button type="button" className="ghost" onClick={() => setPdvStep('categories')}>[V] Voltar</button>
+              <div className="pdv-footer" style={{ gap: '8px', display: 'flex' }}>
+                <button type="button" className="ghost" onClick={() => { setPdvStep('categories'); setSelectedProductId(null); }}>[V] Voltar</button>
+                {pdvStep === 'items' && selectedProductId && (
+                  <button
+                    type="button"
+                    className="button-success"
+                    style={{ background: 'linear-gradient(135deg, var(--amber-500), var(--orange-500))', color: 'white', border: '1.5px solid var(--gray-900)' }}
+                    onClick={() => {
+                      addToCart(selectedProductId)
+                      setSelectedProductId(null)
+                    }}
+                  >
+                    Confirmar Item
+                  </button>
+                )}
                 <button type="button" className="button-primary" onClick={() => setPdvStep('items')}>[A] Próximo</button>
               </div>
             </div>
@@ -917,7 +1066,20 @@ export default function Kitchen() {
                 {payments.length > 0 && (
                   <div className="pdv-payment-summary">
                     {payments.map((p, idx) => (
-                      <span key={idx} className="payment-tag">{paymentMethodLabel(p.method)} {formatCents(p.amount_cents)}</span>
+                      <span key={idx} className="payment-tag">
+                        {paymentMethodLabel(p.method)} {formatCents(p.amount_cents)}
+                        <button
+                          type="button"
+                          className="remove-payment-btn"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removePayment(idx)
+                          }}
+                          title="Remover pagamento"
+                        >
+                          ✕
+                        </button>
+                      </span>
                     ))}
                   </div>
                 )}
@@ -927,6 +1089,28 @@ export default function Kitchen() {
                     <Check size={14} style={{ opacity: nfRequested ? 1 : 0 }} /> CPF na nota
                   </button>
                 </div>
+                {nfRequested && (
+                  <div className="field" style={{ gap: '4px', display: 'flex', flexDirection: 'column' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--gray-600)' }}>CPF para a Nota</label>
+                    <input
+                      type="text"
+                      placeholder="000.000.000-00"
+                      value={cpf}
+                      onChange={e => setCpf(formatCPF(e.target.value))}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1.5px solid var(--gray-200)',
+                        fontSize: '14px',
+                        outline: 'none',
+                        transition: 'border-color 0.2s',
+                      }}
+                      onFocus={e => e.target.style.borderColor = 'var(--amber-400)'}
+                      onBlur={e => e.target.style.borderColor = 'var(--gray-200)'}
+                    />
+                  </div>
+                )}
                 {validationErrors.length > 0 && (
                   <div className="pdv-validation-errors">
                     {validationErrors.map((err, idx) => (
@@ -934,7 +1118,9 @@ export default function Kitchen() {
                     ))}
                   </div>
                 )}
-                <button type="submit" className="button-success generate-btn">ENTER Gerar pedido</button>
+                <button type="submit" className="button-success generate-btn" disabled={isSubmitting}>
+                  {isSubmitting ? 'Gerando pedido...' : 'ENTER Gerar pedido'}
+                </button>
               </div>
             </div>
           </form>
@@ -949,7 +1135,6 @@ export default function Kitchen() {
                 <div className="modal-tabs">
                   <button type="button" className={clsx('tab', deliveryType === 'delivery' && 'active')} onClick={() => setDeliveryType('delivery')}>Entrega</button>
                   <button type="button" className={clsx('tab', deliveryType === 'pickup' && 'active')} onClick={() => setDeliveryType('pickup')}>Retirada</button>
-                  <button type="button" className={clsx('tab', deliveryType === 'dine_in' && 'active')} onClick={() => setDeliveryType('dine_in')}>Balcão</button>
                 </div>
                 {deliveryType === 'delivery' && (
                   <div className="modal-body">
@@ -961,7 +1146,7 @@ export default function Kitchen() {
                             <p className="text-xs text-gray-500">{a.neighborhood} - {a.city}</p>
                           </div>
                           <div className="flex gap-2">
-                             <button type="button" className="p-1 hover:bg-red-50 text-red-500 rounded" onClick={(e) => { e.stopPropagation(); handleDeleteAddress() }}>✕</button>
+                            <button type="button" className="p-1 hover:bg-red-50 text-red-500 rounded" onClick={(e) => { e.stopPropagation(); handleDeleteAddress() }}>✕</button>
                           </div>
                         </div>
                       ))}
@@ -977,14 +1162,16 @@ export default function Kitchen() {
                       <input type="text" placeholder="Cidade" value={addressForm.city} onChange={e => setAddressForm(p => ({ ...p, city: e.target.value }))} />
                       <div className="mt-4">
                         <label className="text-sm font-medium">Taxa de entrega</label>
-                        <input type="text" placeholder="0,00" value={String(deliveryFee/100)} onChange={e => setDeliveryFee(toCents(e.target.value))} />
+                        <input type="text" placeholder="0,00" value={String(deliveryFee / 100)} onChange={e => setDeliveryFee(toCents(e.target.value))} />
                       </div>
                     </div>
                   </div>
                 )}
                 <div className="modal-footer">
-                  <button type="button" className="button-secondary" onClick={handleSaveAddress}>Salvar</button>
-                  <button type="button" className="button-primary" onClick={() => setShowDeliveryModal(false)}>Concluir</button>
+                  {deliveryType === 'delivery' && (
+                    <button type="button" className="button-secondary" onClick={handleSaveAddress}>Salvar</button>
+                  )}
+                  <button type="button" className="button-primary" onClick={handleConcluirDelivery}>Concluir</button>
                 </div>
               </div>
             </div>
@@ -999,7 +1186,143 @@ export default function Kitchen() {
               <div className="drawer-body">
                 <button type="button" className="button-primary" onClick={() => { addPayment('cash'); setShowPaymentDrawer(false) }}>Dinheiro</button>
                 <button type="button" className="button-primary" onClick={() => { addPayment('card'); setShowPaymentDrawer(false) }}>Cartão</button>
-                <button type="button" className="button-secondary" onClick={() => { addPayment('split'); setShowPaymentDrawer(false) }}>Dividido</button>
+                <button type="button" className="button-secondary" onClick={() => { setShowSplitPaymentModal(true); setShowPaymentDrawer(false) }}>Dividido</button>
+              </div>
+            </div>
+          )}
+
+          {showSplitPaymentModal && (
+            <div className="modal-backdrop" style={{ zIndex: 2200 }}>
+              <div className="modal split-payment-modal" style={{ width: 'min(480px, 95vw)', padding: '24px', background: '#FFFDF9', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--gray-200)', paddingBottom: '12px' }}>
+                  <h3 className="text-xl font-bold" style={{ fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Dividir Pagamento
+                  </h3>
+                  <button type="button" onClick={() => setShowSplitPaymentModal(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: 'var(--gray-500)' }}>✕</button>
+                </div>
+
+                <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Totais de Resumo */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px', background: 'var(--gray-50)', borderRadius: '12px', border: '1.5px solid var(--gray-900)' }}>
+                    <div>
+                      <span style={{ fontSize: '12px', color: 'var(--gray-500)', fontWeight: 600, display: 'block', textTransform: 'uppercase' }}>Total do Pedido</span>
+                      <span style={{ fontSize: '20px', fontWeight: 900, color: 'var(--gray-900)', fontFamily: 'var(--font-display)' }}>{formatCents(totalValue)}</span>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '12px', color: 'var(--gray-500)', fontWeight: 600, display: 'block', textTransform: 'uppercase' }}>Faltando Pagar</span>
+                      <span style={{ fontSize: '20px', fontWeight: 900, color: remaining > 0 ? 'var(--orange-600)' : 'var(--emerald-600)', fontFamily: 'var(--font-display)' }}>
+                        {formatCents(remaining)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Inputs de Forma de Pagamento */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* PIX Row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gray-700)', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>PIX</span>
+                        {parsedPix > 0 && <span style={{ color: 'var(--emerald-600)', fontSize: '12px' }}>✓ Inserido</span>}
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ position: 'relative', flex: 1 }}>
+                          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--gray-400)', fontSize: '14px', fontWeight: 600 }}>R$</span>
+                          <input
+                            type="text"
+                            placeholder="0,00"
+                            value={splitPixStr}
+                            onChange={e => setSplitPixStr(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px 10px 32px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--gray-200)', fontSize: '14px', fontWeight: 600, outline: 'none' }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="button-ghost"
+                          onClick={() => handleFillRemaining('pix')}
+                          style={{ padding: '8px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-300)', cursor: 'pointer', background: 'white' }}
+                        >
+                          Restante
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Dinheiro Row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gray-700)', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Dinheiro</span>
+                        {parsedCash > 0 && <span style={{ color: 'var(--emerald-600)', fontSize: '12px' }}>✓ Inserido</span>}
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ position: 'relative', flex: 1 }}>
+                          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--gray-400)', fontSize: '14px', fontWeight: 600 }}>R$</span>
+                          <input
+                            type="text"
+                            placeholder="0,00"
+                            value={splitCashStr}
+                            onChange={e => setSplitCashStr(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px 10px 32px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--gray-200)', fontSize: '14px', fontWeight: 600, outline: 'none' }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="button-ghost"
+                          onClick={() => handleFillRemaining('cash')}
+                          style={{ padding: '8px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-300)', cursor: 'pointer', background: 'white' }}
+                        >
+                          Restante
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Cartão Row */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '14px', fontWeight: 700, color: 'var(--gray-700)', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Cartão</span>
+                        {parsedCard > 0 && <span style={{ color: 'var(--emerald-600)', fontSize: '12px' }}>✓ Inserido</span>}
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ position: 'relative', flex: 1 }}>
+                          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--gray-400)', fontSize: '14px', fontWeight: 600 }}>R$</span>
+                          <input
+                            type="text"
+                            placeholder="0,00"
+                            value={splitCardStr}
+                            onChange={e => setSplitCardStr(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px 10px 32px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--gray-200)', fontSize: '14px', fontWeight: 600, outline: 'none' }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="button-ghost"
+                          onClick={() => handleFillRemaining('card')}
+                          style={{ padding: '8px 12px', fontSize: '12px', fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-300)', cursor: 'pointer', background: 'white' }}
+                        >
+                          Restante
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="modal-footer" style={{ display: 'flex', gap: '10px', marginTop: '20px', paddingTop: '12px', borderTop: '1px solid var(--gray-200)' }}>
+                  <button
+                    type="button"
+                    className="button-ghost"
+                    onClick={() => { setSplitPixStr(''); setSplitCashStr(''); setSplitCardStr(''); }}
+                    style={{ flex: 1, padding: '12px', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', background: 'transparent' }}
+                  >
+                    Limpar Tudo
+                  </button>
+                  <button
+                    type="button"
+                    className="button-primary"
+                    onClick={handleConfirmSplit}
+                    disabled={totalPaid < totalValue}
+                    style={{ flex: 2, padding: '12px', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 700, cursor: 'pointer', color: 'white', background: totalPaid >= totalValue ? 'linear-gradient(135deg, var(--amber-500), var(--orange-500))' : 'var(--gray-300)', border: '1.5px solid var(--gray-900)' }}
+                  >
+                    Confirmar Divisão
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1017,17 +1340,17 @@ export default function Kitchen() {
       )}
 
       {selectedOrder && (
-        <div 
-          className="modal-backdrop" 
-          onClick={() => setSelectedOrder(null)} 
+        <div
+          className="modal-backdrop"
+          onClick={() => setSelectedOrder(null)}
           style={{ zIndex: 2150 }}
         >
           {/* Central Modal Card Panel */}
-          <div 
-            className="modal animate-in" 
-            style={{ 
-              width: 'min(540px, 95vw)', 
-              maxWidth: '540px', 
+          <div
+            className="modal animate-in"
+            style={{
+              width: 'min(540px, 95vw)',
+              maxWidth: '540px',
               maxHeight: '85vh',
               overflowY: 'auto',
               display: 'flex',
@@ -1051,8 +1374,8 @@ export default function Kitchen() {
                   {selectedOrder.customer_name || (selectedOrder.customer_id ? profiles[selectedOrder.customer_id]?.name : null) || 'Cliente'}
                 </span>
               </div>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 className="button-ghost p-1 flex-center"
                 style={{ borderRadius: '50%', width: '36px', height: '36px', minWidth: 'unset', border: 'none', background: 'var(--gray-100)' }}
                 onClick={() => setSelectedOrder(null)}
@@ -1060,272 +1383,324 @@ export default function Kitchen() {
                 <X size={18} />
               </button>
             </div>
-              {/* 1. Canal e Tempo */}
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                {/* Canal de Entrega Tag */}
-                {(() => {
-                  const dtype = selectedOrder.deliveries?.[0]?.delivery_type || selectedOrder.delivery_type || 'dine_in'
-                  if (dtype === 'delivery') {
-                    return (
-                      <span className="badge badge-preparing" style={{ padding: '6px 12px', fontSize: '13px', background: '#F0F9FF', color: '#0EA5E9' }}>
-                        <Truck size={14} style={{ marginRight: '4px' }} /> Delivery
-                      </span>
-                    )
-                  }
-                  if (dtype === 'pickup') {
-                    return (
-                      <span className="badge badge-pending" style={{ padding: '6px 12px', fontSize: '13px', background: '#FEF3C7', color: '#D97706' }}>
-                        <PackageOpen size={14} style={{ marginRight: '4px' }} /> Retirada
-                      </span>
-                    )
-                  }
+            {/* 1. Canal e Tempo */}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {/* Canal de Entrega Tag */}
+              {(() => {
+                const dtype = selectedOrder.deliveries?.[0]?.delivery_type || selectedOrder.delivery_type || 'dine_in'
+                if (dtype === 'delivery') {
                   return (
-                    <span className="badge badge-ready" style={{ padding: '6px 12px', fontSize: '13px', background: '#ECFDF5', color: '#10B981' }}>
-                      <ShoppingBag size={14} style={{ marginRight: '4px' }} /> Consumo Local
+                    <span className="badge badge-preparing" style={{ padding: '6px 12px', fontSize: '13px', background: '#F0F9FF', color: '#0EA5E9' }}>
+                      <Truck size={14} style={{ marginRight: '4px' }} /> Delivery
                     </span>
                   )
-                })()}
-
-                {/* Cronometro decorrido */}
-                <span className="badge" style={{ padding: '6px 12px', fontSize: '13px', background: 'var(--gray-100)', color: 'var(--gray-600)' }}>
-                  <Clock size={14} style={{ marginRight: '4px' }} />
-                  Entrou há {getMinutesSince(selectedOrder.created_at, now)} min
-                </span>
-                
-                {/* Status atual */}
-                <span className={`badge badge-${selectedOrder.status}`} style={{ padding: '6px 12px', fontSize: '13px' }}>
-                  Status: {selectedOrder.status === 'preparing' ? 'Em Preparo' : selectedOrder.status === 'ready' ? 'Pronto' : 'Pendente'}
-                </span>
-              </div>
-
-              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
-
-              {/* 2. Observações Gerais do Pedido (Crítico) */}
-              {selectedOrder.order_notes && (
-                <div style={{
-                  padding: '16px',
-                  background: '#FEF2F2',
-                  border: '1.5px solid #EF4444',
-                  borderRadius: '12px',
-                  color: '#B91C1C',
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  boxShadow: 'var(--shadow-xs)'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                    <AlertCircle size={18} />
-                    <span>OBSERVAÇÃO DO CLIENTE:</span>
-                  </div>
-                  <p style={{ margin: 0, textTransform: 'uppercase' }}>"{selectedOrder.order_notes}"</p>
-                </div>
-              )}
-
-              {/* 3. Lista de Itens */}
-              <div>
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
-                  Itens do Pedido ({selectedOrder.order_items?.length || 0})
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {selectedOrder.order_items?.map((item) => (
-                    <div 
-                      key={item.id} 
-                      style={{ 
-                        padding: '14px 16px', 
-                        background: '#FFFFFF', 
-                        borderRadius: '12px', 
-                        border: '1px solid var(--gray-200)',
-                        boxShadow: 'var(--shadow-xs)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <span style={{ fontWeight: 800, color: 'var(--amber-600)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
-                            {item.quantity}x
-                          </span>
-                          <span style={{ fontWeight: 600, color: 'var(--gray-900)', fontSize: '15px' }}>
-                            {item.name_snapshot}
-                          </span>
-                        </div>
-                        <span style={{ fontWeight: 700, color: 'var(--gray-900)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
-                          {formatCents((item.price_cents_snapshot || 0) * item.quantity)}
-                        </span>
-                      </div>
-
-                      {/* Observações / Adicionais do Item com Destaque Crítico */}
-                      {item.notes && (
-                        <div style={{
-                          marginTop: '10px',
-                          padding: '8px 12px',
-                          background: '#FFFBEB',
-                          borderLeft: '4px solid #F59E0B',
-                          borderRadius: '4px',
-                          color: '#B45309',
-                          fontSize: '13px',
-                          fontWeight: 600,
-                          lineHeight: '1.4'
-                            }}>
-                          💡 Opcionais: <span style={{ textTransform: 'uppercase' }}>{item.notes}</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
-
-              {/* 4. Logística de Entrega (se Delivery) */}
-              {(() => {
-                const delivery = selectedOrder.deliveries?.[0]
-                const dtype = delivery?.delivery_type || selectedOrder.delivery_type || 'dine_in'
-                const isDelivery = dtype === 'delivery'
-                const phone = selectedOrder.customer_phone || (selectedOrder.customer_id ? profiles[selectedOrder.customer_id]?.phone : null)
-                const assignedDriver = delivery?.driver_id ? drivers.find(d => d.id === delivery.driver_id) : null
-
+                }
+                if (dtype === 'pickup') {
+                  return (
+                    <span className="badge badge-pending" style={{ padding: '6px 12px', fontSize: '13px', background: '#FEF3C7', color: '#D97706' }}>
+                      <PackageOpen size={14} style={{ marginRight: '4px' }} /> Retirada
+                    </span>
+                  )
+                }
                 return (
-                  <div>
-                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
-                      Logística & Entrega
-                    </h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {/* Telefone */}
-                      {phone && (
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-700)' }}>
-                          <Phone size={16} style={{ color: 'var(--amber-600)' }} />
-                          <strong>Telefone:</strong>
-                          <span>{formatPhone(phone)}</span>
-                        </div>
-                      )}
-
-                      {/* Endereço */}
-                      {isDelivery && delivery ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '14px', color: 'var(--gray-700)' }}>
-                            <Truck size={16} style={{ color: 'var(--amber-600)', flexShrink: 0, marginTop: '2px' }} />
-                            <div>
-                              <strong>Endereço de Entrega:</strong>
-                              <p style={{ margin: '2px 0 0 0', lineHeight: '1.4' }}>
-                                {delivery.street}, {delivery.number}
-                                {delivery.complement && ` (${delivery.complement})`}
-                                <br />
-                                {delivery.neighborhood} — {delivery.city}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-500)', fontStyle: 'italic' }}>
-                          <PackageOpen size={16} />
-                          <span>Pedido para {dtype === 'pickup' ? 'Retirada no Balcão' : 'Consumo Local'}</span>
-                        </div>
-                      )}
-
-                      {/* Entregador */}
-                      {isDelivery && (
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: '10px', 
-                          fontSize: '14px', 
-                          padding: '10px 14px', 
-                          background: assignedDriver ? 'var(--emerald-50)' : 'var(--amber-50)', 
-                          border: assignedDriver ? '1px solid rgba(16,185,129,0.2)' : '1px solid rgba(245,158,11,0.2)', 
-                          borderRadius: '8px',
-                          color: assignedDriver ? 'var(--emerald-700)' : 'var(--amber-700)'
-                        }}>
-                          <Bike size={16} />
-                          <strong>Entregador:</strong>
-                          {assignedDriver ? (
-                            <span style={{ fontWeight: 600 }}>{assignedDriver.name} ({assignedDriver.vehicle_type || 'Moto'})</span>
-                          ) : (
-                            <span style={{ fontWeight: 600 }}>⚠️ Aguardando vínculo na frota</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <span className="badge badge-ready" style={{ padding: '6px 12px', fontSize: '13px', background: '#ECFDF5', color: '#10B981' }}>
+                    <ShoppingBag size={14} style={{ marginRight: '4px' }} /> Consumo Local
+                  </span>
                 )
               })()}
 
-              <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+              {/* Cronometro decorrido */}
+              <span className="badge" style={{ padding: '6px 12px', fontSize: '13px', background: 'var(--gray-100)', color: 'var(--gray-600)' }}>
+                <Clock size={14} style={{ marginRight: '4px' }} />
+                Entrou há {getMinutesSince(selectedOrder.created_at, now)} min
+              </span>
 
-              {/* 5. Resumo Financeiro */}
-              <div>
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
-                  Resumo Financeiro
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px', background: 'var(--surface-100)', borderRadius: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
-                    <span>Subtotal dos itens</span>
-                    <span>{formatCents(selectedOrder.subtotal)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
-                    <span>Taxa de entrega</span>
-                    <span>{formatCents(selectedOrder.delivery_fee)}</span>
-                  </div>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 900, color: 'var(--gray-900)', fontFamily: 'var(--font-display)', paddingTop: '10px', borderTop: '2px dashed var(--gray-200)', marginTop: '4px' }}>
-                    <span>Total</span>
-                    <span>{formatCents(selectedOrder.total)}</span>
-                  </div>
+              {/* Status atual */}
+              <span className={`badge badge-${selectedOrder.status}`} style={{ padding: '6px 12px', fontSize: '13px' }}>
+                Status: {selectedOrder.status === 'preparing' ? 'Em Preparo' : selectedOrder.status === 'ready' ? 'Pronto' : 'Pendente'}
+              </span>
+            </div>
 
-                  {/* Forma de Pagamento */}
-                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--gray-200)' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--gray-500)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
-                      Pagamento:
-                    </span>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {selectedOrderPayments.length > 0 ? (
-                        selectedOrderPayments.map((p, idx) => (
-                          <span key={idx} className="payment-tag">
-                            {paymentMethodLabel(p.method)}: {formatCents(p.amount_cents)}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="payment-tag" style={{ background: 'var(--rose-50)', color: 'var(--rose-600)', borderColor: 'rgba(244,63,94,0.2)' }}>
-                          {paymentMethodLabel(selectedOrder.payment_method || 'Outro')}
+            <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+            {/* 2. Observações Gerais do Pedido (Crítico) */}
+            {selectedOrder.order_notes && (
+              <div style={{
+                padding: '16px',
+                background: '#FEF2F2',
+                border: '1.5px solid #EF4444',
+                borderRadius: '12px',
+                color: '#B91C1C',
+                fontSize: '14px',
+                fontWeight: 700,
+                boxShadow: 'var(--shadow-xs)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <AlertCircle size={18} />
+                  <span>OBSERVAÇÃO DO CLIENTE:</span>
+                </div>
+                <p style={{ margin: 0, textTransform: 'uppercase' }}>"{selectedOrder.order_notes}"</p>
+              </div>
+            )}
+
+            {/* 3. Lista de Itens */}
+            <div>
+              <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                Itens do Pedido ({selectedOrder.order_items?.length || 0})
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {selectedOrder.order_items?.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: '14px 16px',
+                      background: '#FFFFFF',
+                      borderRadius: '12px',
+                      border: '1px solid var(--gray-200)',
+                      boxShadow: 'var(--shadow-xs)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <span style={{ fontWeight: 800, color: 'var(--amber-600)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
+                          {item.quantity}x
                         </span>
-                      )}
+                        <span style={{ fontWeight: 600, color: 'var(--gray-900)', fontSize: '15px' }}>
+                          {item.name_snapshot}
+                        </span>
+                      </div>
+                      <span style={{ fontWeight: 700, color: 'var(--gray-900)', fontSize: '15px', fontFamily: 'var(--font-display)' }}>
+                        {formatCents((item.price_cents_snapshot || 0) * item.quantity)}
+                      </span>
                     </div>
+
+                    {/* Observações / Adicionais do Item com Destaque Crítico */}
+                    {item.notes && (
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '8px 12px',
+                        background: '#FFFBEB',
+                        borderLeft: '4px solid #F59E0B',
+                        borderRadius: '4px',
+                        color: '#B45309',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        lineHeight: '1.4'
+                      }}>
+                        💡 Opcionais: <span style={{ textTransform: 'uppercase' }}>{item.notes}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+            {/* 4. Logística de Entrega (se Delivery) */}
+            {(() => {
+              const delivery = selectedOrder.deliveries?.[0]
+              const dtype = delivery?.delivery_type || selectedOrder.delivery_type || 'dine_in'
+              const isDelivery = dtype === 'delivery'
+              const phone = selectedOrder.customer_phone || (selectedOrder.customer_id ? profiles[selectedOrder.customer_id]?.phone : null)
+              const assignedDriver = delivery?.driver_id ? drivers.find(d => d.id === delivery.driver_id) : null
+
+              return (
+                <div>
+                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                    Logística & Entrega
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Telefone */}
+                    {phone && (
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-700)' }}>
+                        <Phone size={16} style={{ color: 'var(--amber-600)' }} />
+                        <strong>Telefone:</strong>
+                        <span>{formatPhone(phone)}</span>
+                      </div>
+                    )}
+
+                    {/* Endereço */}
+                    {isDelivery && delivery ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '14px', color: 'var(--gray-700)' }}>
+                          <Truck size={16} style={{ color: 'var(--amber-600)', flexShrink: 0, marginTop: '2px' }} />
+                          <div>
+                            <strong>Endereço de Entrega:</strong>
+                            <p style={{ margin: '2px 0 0 0', lineHeight: '1.4' }}>
+                              {delivery.street}, {delivery.number}
+                              {delivery.complement && ` (${delivery.complement})`}
+                              <br />
+                              {delivery.neighborhood} — {delivery.city}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '14px', color: 'var(--gray-500)', fontStyle: 'italic' }}>
+                        <PackageOpen size={16} />
+                        <span>Pedido para {dtype === 'pickup' ? 'Retirada no Balcão' : 'Consumo Local'}</span>
+                      </div>
+                    )}
+
+                    {/* Entregador */}
+                    {isDelivery && (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '14px',
+                        padding: '10px 14px',
+                        background: assignedDriver ? 'var(--emerald-50)' : 'var(--amber-50)',
+                        border: assignedDriver ? '1px solid rgba(16,185,129,0.2)' : '1px solid rgba(245,158,11,0.2)',
+                        borderRadius: '8px',
+                        color: assignedDriver ? 'var(--emerald-700)' : 'var(--amber-700)'
+                      }}>
+                        <Bike size={16} />
+                        <strong>Entregador:</strong>
+                        {assignedDriver ? (
+                          <span style={{ fontWeight: 600 }}>{assignedDriver.name} ({assignedDriver.vehicle_type || 'Moto'})</span>
+                        ) : (
+                          <span style={{ fontWeight: 600 }}>⚠️ Aguardando vínculo na frota</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+
+            <hr style={{ border: 'none', borderTop: '1px solid var(--gray-200)', margin: 0 }} />
+
+            {/* 5. Resumo Financeiro */}
+            <div>
+              <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--gray-500)', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                Resumo Financeiro
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px', background: 'var(--surface-100)', borderRadius: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
+                  <span>Subtotal dos itens</span>
+                  <span>{formatCents(selectedOrder.subtotal)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: 'var(--gray-600)' }}>
+                  <span>Taxa de entrega</span>
+                  <span>{formatCents(selectedOrder.delivery_fee)}</span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '20px', fontWeight: 900, color: 'var(--gray-900)', fontFamily: 'var(--font-display)', paddingTop: '10px', borderTop: '2px dashed var(--gray-200)', marginTop: '4px' }}>
+                  <span>Total</span>
+                  <span>{formatCents(selectedOrder.total)}</span>
+                </div>
+
+                {/* Forma de Pagamento */}
+                <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--gray-200)' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--gray-500)', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                    Pagamento:
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {selectedOrderPayments.length > 0 ? (
+                      selectedOrderPayments.map((p, idx) => (
+                        <span key={idx} className="payment-tag">
+                          {paymentMethodLabel(p.method)}: {formatCents(p.amount_cents)}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="payment-tag" style={{ background: 'var(--rose-50)', color: 'var(--rose-600)', borderColor: 'rgba(244,63,94,0.2)' }}>
+                        {paymentMethodLabel(selectedOrder.payment_method || 'Outro')}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Footer Ações */}
-              <div 
-                style={{ 
-                  paddingTop: '20px', 
-                  borderTop: '1px solid var(--gray-200)', 
-                  background: '#FFFFFF',
-                  display: 'flex',
-                  gap: '12px',
-                  alignItems: 'center',
-                  marginTop: '8px'
-                }}
+            {/* Footer Ações */}
+            <div
+              style={{
+                paddingTop: '20px',
+                borderTop: '1px solid var(--gray-200)',
+                background: '#FFFFFF',
+                display: 'flex',
+                gap: '12px',
+                alignItems: 'center',
+                marginTop: '8px'
+              }}
+            >
+              {/* Imprimir Cupom */}
+              <button
+                type="button"
+                className="button-primary flex-center gap-2"
+                onClick={() => handlePrint(selectedOrder)}
+                style={{ flex: 1, padding: '12px 16px', justifyContent: 'center' }}
               >
-                {/* Imprimir Cupom */}
-                <button 
-                  type="button" 
-                  className="button-primary flex-center gap-2" 
-                  onClick={() => handlePrint(selectedOrder)}
-                  style={{ flex: 1, padding: '12px 16px', justifyContent: 'center' }}
-                >
-                  <Printer size={16} /> Imprimir (80mm)
-                </button>
+                <Printer size={16} /> Imprimir (80mm)
+              </button>
 
-                {/* Cancelar Pedido */}
-                <button 
-                  type="button" 
-                  className="button-danger flex-center gap-2"
-                  onClick={() => setShowCancelDrawer(true)}
-                  style={{ padding: '12px 16px', justifyContent: 'center' }}
-                >
-                  <Trash2 size={16} /> Cancelar
-                </button>
-              </div>
+              {/* Cancelar Pedido */}
+              <button
+                type="button"
+                className="button-danger flex-center gap-2"
+                onClick={() => setShowCancelDrawer(true)}
+                style={{ padding: '12px 16px', justifyContent: 'center' }}
+              >
+                <Trash2 size={16} /> Cancelar
+              </button>
             </div>
           </div>
-        )}
-      </AdminLayout>
-    )
-  }
+        </div>
+      )}
+
+      {showCancelDrawer && selectedOrder && (
+        <div className="modal-backdrop" style={{ zIndex: 2200 }} onClick={() => setShowCancelDrawer(false)}>
+          <div className="modal" style={{ width: 'min(400px, 95vw)', gap: '16px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Cancelar Pedido</h3>
+              <button type="button" onClick={() => setShowCancelDrawer(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <p style={{ margin: 0, fontSize: '14px', color: 'var(--gray-600)', lineHeight: '1.5' }}>
+                Tem certeza de que deseja cancelar o pedido <strong>#{getOrderNumber(selectedOrder)}</strong>? Esta ação é permanente e atualizará o status no painel e relatórios.
+              </p>
+              <div className="field" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--gray-700)' }}>Motivo do Cancelamento</label>
+                <textarea
+                  placeholder="Descreva o motivo do cancelamento..."
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  style={{
+                    width: '100%',
+                    minHeight: '80px',
+                    padding: '10px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1.5px solid var(--gray-200)',
+                    fontSize: '14px',
+                    outline: 'none',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="button-ghost"
+                style={{ flex: 1, padding: '12px', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', background: 'transparent' }}
+                onClick={() => setShowCancelDrawer(false)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="button-danger"
+                style={{ flex: 1, padding: '12px', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 700, cursor: 'pointer', color: 'white' }}
+                onClick={handleCancelOrder}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AdminLayout>
+  )
+}

@@ -295,7 +295,7 @@ serve(async (req) => {
     let deliveryPayload: Record<string, unknown> = {
       order_id: result?.order_id,
       delivery_type: payload.delivery.type,
-      delivery_fee_cents: deliveryFeeCents,
+      fee_cents: deliveryFeeCents,
     }
 
     if (payload.delivery.type === 'delivery') {
@@ -371,6 +371,17 @@ serve(async (req) => {
           }
         }
       }
+    }
+
+    const { error: deliveryInsertError } = await admin
+      .from('deliveries')
+      .insert(deliveryPayload)
+
+    if (deliveryInsertError) {
+      return new Response(JSON.stringify({ error: deliveryInsertError.message }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
     }
   }
 

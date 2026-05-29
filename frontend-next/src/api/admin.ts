@@ -46,6 +46,7 @@ export type OrderSummary = {
     neighborhood: string | null
     city: string | null
     complement: string | null
+    driver_id?: string | null
   }> | null
   payments: Array<{
     id: string

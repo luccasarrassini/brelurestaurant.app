@@ -730,6 +730,11 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   text-align: left; transition: all 0.2s; cursor: pointer;
 }
 .pdv-item-card:hover { border-color: var(--amber-400); box-shadow: var(--shadow-sm); }
+.pdv-item-card.active {
+  border-color: var(--amber-500);
+  background: var(--amber-50);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+}
 .pdv-breadcrumb { font-size: 13px; color: var(--gray-500); margin-bottom: 12px; font-weight: 500; }
 .pdv-breadcrumb button { background: none; border: none; color: var(--amber-600); cursor: pointer; font-weight: 600; }
 .pdv-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 16px; }
@@ -795,6 +800,29 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .modal-header button { background: var(--gray-100); border: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 16px; transition: all 0.15s; display:grid; place-items:center; }
 .modal-header button:hover { background: var(--gray-200); }
 .modal-tabs { display: flex; gap: 8px; }
+.modal-tabs .tab {
+  background: var(--surface-100);
+  color: var(--gray-600);
+  border: 1.5px solid var(--gray-200);
+  padding: 8px 20px;
+  border-radius: var(--radius-lg);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: var(--font-display);
+}
+.modal-tabs .tab:hover {
+  background: var(--surface-200);
+  color: var(--gray-800);
+  border-color: var(--gray-300);
+}
+.modal-tabs .tab.active {
+  background: linear-gradient(135deg, var(--amber-500), var(--orange-500));
+  color: var(--white);
+  border: 1.5px solid var(--gray-900);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+}
 .modal-body { display: flex; flex-direction: column; gap: 16px; }
 .modal-footer { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
 
@@ -907,6 +935,37 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   font-size: 12px; font-weight: 600;
   background: var(--emerald-50); color: var(--emerald-600);
   border: 1px solid rgba(16,185,129,0.2);
+  position: relative;
+  transition: all 0.2s ease;
+}
+.payment-tag:hover {
+  padding-right: 24px;
+}
+.remove-payment-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--emerald-600);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transition: all 0.15s ease;
+}
+.payment-tag:hover .remove-payment-btn {
+  display: inline-flex;
+}
+.remove-payment-btn:hover {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--rose-600);
 }
 
 /* ═══════ MENU MANAGER ═══════ */
